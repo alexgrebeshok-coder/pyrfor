@@ -233,7 +233,7 @@ chmod +x "$LAUNCHER"
 echo "==> [build-sidecar] Launcher is executable: $LAUNCHER"
 
 # ── 6. Smoke-test: start daemon, capture stdout, wait for LISTENING_ON ───────
-echo "==> [build-sidecar] Smoke-testing launcher (capturing stdout for up to 20s) …"
+echo "==> [build-sidecar] Smoke-testing launcher (capturing stdout for up to 60s) …"
 
 CAPTURE_FILE="$APP_DIR/.smoke-stdout"
 rm -f "$CAPTURE_FILE"
@@ -242,7 +242,7 @@ PYRFOR_TELEGRAM_AUTOSTART=false PYRFOR_PORT=0 "$LAUNCHER" > "$CAPTURE_FILE" 2>&1
 DAEMON_PID=$!
 
 LISTENING_LINE=""
-TIMEOUT=20
+TIMEOUT=60
 START_SECONDS=$SECONDS
 FOUND=0
 

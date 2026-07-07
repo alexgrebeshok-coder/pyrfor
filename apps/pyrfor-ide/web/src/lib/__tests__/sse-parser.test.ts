@@ -44,4 +44,11 @@ describe('parseSseFrames', () => {
     expect(frames[0].data).toBe('{"type":"token","text":"a"}');
     expect(remainder).toBe('data: par');
   });
+
+  it('strips CRLF line endings from SSE lines', () => {
+    const text = 'data: {"type":"token","text":"hi"}\r\n\r\n';
+    const { frames } = parseSseFrames(text);
+    expect(frames).toHaveLength(1);
+    expect(frames[0].data).toBe('{"type":"token","text":"hi"}');
+  });
 });

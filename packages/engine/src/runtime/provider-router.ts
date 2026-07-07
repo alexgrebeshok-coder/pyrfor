@@ -627,6 +627,29 @@ export class ProviderRouter {
   }
 
   /**
+   * Total USD spent since the start of the current UTC day, aggregated from the
+   * same `costLog` that {@link getSessionCost} and {@link getTotalCost} read.
+   *
+   * This is the runtime's REAL provider spend for today — not a parallel
+   * ledger — so it stays in sync with calls as {@link logCost} records them.
+   * The day boundary is UTC midnight, matching the token-budget controller's
+   * `window='day'` math.
+   */
+  getTodaysCost(): number {
+    const startOfTodayUtc = Date.UTC(
+      new Date().getUTCFullYear(),
+      new Date().getUTCMonth(),
+      new Date().getUTCDate(),
+    );
+    let total = 0;
+    for (const c of this.costLog) {
+      if (c.timestamp.getTime() < startOfTodayUtc) continue;
+      total += c.costUsd;
+    }
+    return total;
+  }
+
+  /**
    * Return a copy of the internal cost log, optionally limited to the last
    * `limit` entries.
    */

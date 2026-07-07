@@ -26,6 +26,65 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import { logger } from '../observability/logger.js';
 import { processManager } from './process-manager.js';
+import { PermissionEngine, ToolRegistry, registerRuntimeToolAliases, registerStandardTools, } from './permission-engine.js';
+let sandboxToolProvider = null;
+/** Configure sandbox-backed exec routing (none disables). */
+export function setSandboxProvider(provider) {
+    sandboxToolProvider = provider;
+}
+export function getSandboxProvider() {
+    return sandboxToolProvider;
+}
+let runtimePermissionEngine = null;
+let permissionDeniedHandler = null;
+/** Install (or clear) the runtime permission engine used by executeRuntimeTool. */
+export function configureRuntimePermissionEngine(opts) {
+    var _a;
+    if (opts === null || opts === undefined) {
+        runtimePermissionEngine = null;
+        return null;
+    }
+    const registry = new ToolRegistry();
+    registerStandardTools(registry);
+    registerRuntimeToolAliases(registry);
+    runtimePermissionEngine = new PermissionEngine(registry, {
+        profile: (_a = opts.profile) !== null && _a !== void 0 ? _a : 'standard',
+        overrides: opts.overrides,
+    });
+    return runtimePermissionEngine;
+}
+export function getRuntimePermissionEngine() {
+    return runtimePermissionEngine;
+}
+export function setPermissionDeniedHandler(handler) {
+    permissionDeniedHandler = handler;
+}
+function resolvePermissionContext(ctx) {
+    var _a, _b, _c;
+    return {
+        workspaceId: (_b = (_a = ctx === null || ctx === void 0 ? void 0 : ctx.workspaceId) !== null && _a !== void 0 ? _a : getWorkspaceRoot()) !== null && _b !== void 0 ? _b : 'default',
+        sessionId: (_c = ctx === null || ctx === void 0 ? void 0 : ctx.sessionId) !== null && _c !== void 0 ? _c : 'runtime',
+        runId: ctx === null || ctx === void 0 ? void 0 : ctx.runId,
+    };
+}
+function enforceRuntimePermission(name, args, ctx) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (ctx === null || ctx === void 0 ? void 0 : ctx.skipPermissionCheck)
+            return null;
+        const engine = runtimePermissionEngine;
+        if (!engine)
+            return null;
+        const decision = yield engine.check(name, resolvePermissionContext(ctx), args);
+        if (decision.allow)
+            return null;
+        yield (permissionDeniedHandler === null || permissionDeniedHandler === void 0 ? void 0 : permissionDeniedHandler({ toolName: name, decision, ctx, args }));
+        return {
+            success: false,
+            data: {},
+            error: `Permission denied: ${decision.reason}`,
+        };
+    });
+}
 // ============================================
 // Safety
 // ============================================
@@ -33,30 +92,33 @@ import { processManager } from './process-manager.js';
 // Security — Path Restriction
 // ============================================
 /** Allowed root paths for file operations */
-const ALLOWED_ROOTS = ['/tmp'];
+const ALLOWED_ROOTS = [];
 let _workspaceRoot = null;
 /** Set workspace root for file access restriction */
 export function setWorkspaceRoot(root) {
     _workspaceRoot = path.resolve(root);
-    if (!ALLOWED_ROOTS.includes(_workspaceRoot)) {
-        ALLOWED_ROOTS.push(_workspaceRoot);
-    }
+    ALLOWED_ROOTS.splice(0, ALLOWED_ROOTS.length, _workspaceRoot);
 }
 /** Get configured workspace root */
 export function getWorkspaceRoot() {
     return _workspaceRoot;
 }
 /**
- * Validate that a resolved path is within allowed roots.
+ * Validate that a resolved path is within allowed roots (workspace + optional execRoot).
  * Returns the resolved path if OK, throws if blocked.
  */
-function validatePath(rawPath) {
+function validatePath(rawPath, ctx) {
     const resolved = path.resolve(rawPath);
+    const roots = [...ALLOWED_ROOTS];
+    if (ctx === null || ctx === void 0 ? void 0 : ctx.execRoot) {
+        roots.push(path.resolve(ctx.execRoot));
+    }
     // If no workspace root set, allow everything (dev mode)
-    if (ALLOWED_ROOTS.length === 0)
+    if (roots.length === 0)
         return resolved;
-    for (const root of ALLOWED_ROOTS) {
-        if (resolved.startsWith(root + path.sep) || resolved === root) {
+    for (const root of roots) {
+        const r = path.resolve(root);
+        if (resolved.startsWith(r + path.sep) || resolved === r) {
             return resolved;
         }
     }
@@ -105,7 +167,7 @@ export function readFile(filePath, _ctx) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
             // Security: resolve to absolute and ensure it's within allowed paths
-            const resolved = validatePath(filePath);
+            const resolved = validatePath(filePath, _ctx);
             const content = yield fs.readFile(resolved, 'utf-8');
             const stats = yield fs.stat(resolved);
             return {
@@ -127,10 +189,30 @@ export function readFile(filePath, _ctx) {
 /**
  * Write file contents (create or overwrite)
  */
+function assertSandboxWriteAllowed(resolved, ctx) {
+    const provider = sandboxToolProvider;
+    if (!provider || provider.config.mode === 'none')
+        return;
+    if (ctx === null || ctx === void 0 ? void 0 : ctx.execRoot) {
+        const execRoot = path.resolve(ctx.execRoot);
+        if (resolved !== execRoot && !resolved.startsWith(execRoot + path.sep)) {
+            throw new Error(`Path blocked: ${resolved} is outside governed worktree`);
+        }
+        return;
+    }
+    const workspace = getWorkspaceRoot();
+    if (!workspace)
+        return;
+    const root = path.resolve(workspace);
+    if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+        throw new Error(`Path blocked: ${resolved} is outside workspace sandbox root`);
+    }
+}
 export function writeFile(filePath, content, _ctx) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
-            const resolved = validatePath(filePath);
+            const resolved = validatePath(filePath, _ctx);
+            assertSandboxWriteAllowed(resolved, _ctx);
             // Ensure directory exists
             yield fs.mkdir(path.dirname(resolved), { recursive: true });
             yield fs.writeFile(resolved, content, 'utf-8');
@@ -155,7 +237,8 @@ export function writeFile(filePath, content, _ctx) {
 export function editFile(filePath, oldString, newString, _ctx) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
-            const resolved = validatePath(filePath);
+            const resolved = validatePath(filePath, _ctx);
+            assertSandboxWriteAllowed(resolved, _ctx);
             const content = yield fs.readFile(resolved, 'utf-8');
             if (!content.includes(oldString)) {
                 return {
@@ -187,12 +270,29 @@ export function editFile(filePath, oldString, newString, _ctx) {
 import { exec } from 'child_process';
 import { promisify } from 'util';
 const execAsync = promisify(exec);
+function resolveExecCwd(cwd, ctx) {
+    if (!(ctx === null || ctx === void 0 ? void 0 : ctx.execRoot)) {
+        return cwd;
+    }
+    const execRoot = path.resolve(ctx.execRoot);
+    if (!cwd) {
+        return execRoot;
+    }
+    if (path.isAbsolute(cwd)) {
+        throw new Error(`cwd must be relative to the governed worktree: ${cwd}`);
+    }
+    const resolved = path.resolve(execRoot, cwd);
+    if (resolved !== execRoot && !resolved.startsWith(execRoot + path.sep)) {
+        throw new Error(`cwd must stay within the governed worktree: ${cwd}`);
+    }
+    return resolved;
+}
 /**
  * Execute shell command with safety checks
  */
 export function execCommand(command_1) {
-    return __awaiter(this, arguments, void 0, function* (command, options = {}, _ctx) {
-        var _a, _b;
+    return __awaiter(this, arguments, void 0, function* (command, options = {}, ctx) {
+        var _a, _b, _c;
         // Safety checks
         if (isCommandBlocked(command)) {
             logger.error('Blocked dangerous command', { command });
@@ -209,8 +309,45 @@ export function execCommand(command_1) {
         }
         const { cwd, timeout = 30000, maxOutput = 10000 } = options;
         try {
+            const effectiveCwd = (_a = resolveExecCwd(cwd, ctx)) !== null && _a !== void 0 ? _a : process.cwd();
+            const provider = sandboxToolProvider;
+            if (provider && provider.config.mode !== 'none') {
+                try {
+                    const r = yield provider.runShellCommand(command, {
+                        cwd: effectiveCwd,
+                        timeoutMs: timeout,
+                        maxOutputBytes: Math.max(maxOutput * 2, 1024),
+                    });
+                    const truncated = r.stdout.length > maxOutput;
+                    const trimmedStdout = r.stdout.slice(0, maxOutput);
+                    const ok = r.exitCode === 0 && !r.timedOut;
+                    return {
+                        success: ok,
+                        data: {
+                            stdout: trimmedStdout,
+                            stderr: r.stderr.slice(0, maxOutput),
+                            exitCode: r.timedOut ? 124 : r.exitCode,
+                            truncated,
+                        },
+                        error: r.timedOut
+                            ? 'Command timed out'
+                            : r.exitCode !== 0
+                                ? `Command failed with exit code ${r.exitCode}`
+                                : undefined,
+                    };
+                }
+                catch (sandboxErr) {
+                    const msg = sandboxErr instanceof Error ? sandboxErr.message : String(sandboxErr);
+                    logger.error('sandbox exec failed', { command, error: msg });
+                    return {
+                        success: false,
+                        data: { stdout: '', stderr: '', exitCode: -1, truncated: false },
+                        error: msg,
+                    };
+                }
+            }
             const { stdout, stderr } = yield execAsync(command, {
-                cwd,
+                cwd: effectiveCwd,
                 timeout,
                 maxBuffer: maxOutput * 2,
             });
@@ -233,8 +370,8 @@ export function execCommand(command_1) {
                 return {
                     success: false,
                     data: {
-                        stdout: ((_a = execError.stdout) === null || _a === void 0 ? void 0 : _a.slice(0, maxOutput)) || '',
-                        stderr: ((_b = execError.stderr) === null || _b === void 0 ? void 0 : _b.slice(0, maxOutput)) || '',
+                        stdout: ((_b = execError.stdout) === null || _b === void 0 ? void 0 : _b.slice(0, maxOutput)) || '',
+                        stderr: ((_c = execError.stderr) === null || _c === void 0 ? void 0 : _c.slice(0, maxOutput)) || '',
                         exitCode: execError.code || 1,
                         truncated: false,
                     },
@@ -862,6 +999,9 @@ export const runtimeToolDefinitions = [
 // ============================================
 export function executeRuntimeTool(name, args, ctx) {
     return __awaiter(this, void 0, void 0, function* () {
+        const permissionDenied = yield enforceRuntimePermission(name, args, ctx);
+        if (permissionDenied)
+            return permissionDenied;
         switch (name) {
             case 'read_file': {
                 const filePath = String(args.path || '');

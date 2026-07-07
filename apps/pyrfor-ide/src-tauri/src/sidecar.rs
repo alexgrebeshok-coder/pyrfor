@@ -43,6 +43,110 @@ fn append_runtime_log(line: &str) {
     }
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DaemonProbeResult {
+    pub ok: bool,
+    pub port: Option<u16>,
+}
+
+/// Tauri command — native health probe (avoids WebView fetch quirks).
+#[tauri::command]
+pub async fn probe_daemon_health(
+    app: AppHandle,
+    state: State<'_, DaemonPort>,
+) -> Result<DaemonProbeResult, String> {
+    let gateway_ok = engine_gateway_is_healthy().await;
+    if gateway_ok {
+        set_daemon_port(&app, STANDALONE_ENGINE_PORT);
+        return Ok(DaemonProbeResult {
+            ok: true,
+            port: Some(STANDALONE_ENGINE_PORT),
+        });
+    }
+
+    let registered_port = {
+        let guard = state.0.lock().map_err(|e| e.to_string())?;
+        *guard
+    };
+    if let Some(port) = registered_port {
+        let url = format!("http://127.0.0.1:{port}/health");
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(STANDALONE_ENGINE_TIMEOUT_SECS))
+            .build()
+            .map_err(|e| e.to_string())?;
+        if client
+            .get(&url)
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+        {
+            return Ok(DaemonProbeResult {
+                ok: true,
+                port: Some(port),
+            });
+        }
+    }
+
+    Ok(DaemonProbeResult {
+        ok: false,
+        port: None,
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DaemonHttpResponse {
+    pub status: u16,
+    pub body: String,
+}
+
+fn resolve_daemon_port(state: &DaemonPort) -> u16 {
+    state
+        .0
+        .lock()
+        .ok()
+        .and_then(|guard| *guard)
+        .unwrap_or(STANDALONE_ENGINE_PORT)
+}
+
+/// Native HTTP to the local daemon — avoids WebView fetch failures to localhost.
+#[tauri::command]
+pub async fn daemon_http(
+    state: State<'_, DaemonPort>,
+    path: String,
+    method: String,
+    body: Option<String>,
+    headers: Option<std::collections::HashMap<String, String>>,
+) -> Result<DaemonHttpResponse, String> {
+    let port = resolve_daemon_port(&state);
+    let url = format!("http://127.0.0.1:{port}{}", path);
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(300))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let verb = method
+        .parse::<reqwest::Method>()
+        .unwrap_or(reqwest::Method::GET);
+    let mut req = client.request(verb, &url);
+    if let Some(hdrs) = headers {
+        for (k, v) in hdrs {
+            req = req.header(k, v);
+        }
+    }
+    if let Some(payload) = body {
+        req = req.body(payload);
+    }
+
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    let status = res.status().as_u16();
+    let body = res.text().await.map_err(|e| e.to_string())?;
+    Ok(DaemonHttpResponse { status, body })
+}
+
 /// Tauri command — waits up to 5 s for the daemon port, then returns it.
 #[tauri::command]
 pub async fn get_daemon_port(state: State<'_, DaemonPort>) -> Result<u16, String> {
@@ -66,10 +170,11 @@ pub async fn get_daemon_port(state: State<'_, DaemonPort>) -> Result<u16, String
 const SIDECAR_NAME: &str = "pyrfor-daemon";
 const MAX_RESTARTS: u32 = 3;
 const RESTART_WINDOW_SECS: u64 = 60;
-const SIDECAR_READY_TIMEOUT_SECS: u64 = 20;
+/// Workspace + orchestration hydration can exceed 20s on warm machines.
+const SIDECAR_READY_TIMEOUT_SECS: u64 = 120;
 const STANDALONE_ENGINE_PORT: u16 = 18_790;
 const STANDALONE_ENGINE_HEALTH_URL: &str = "http://127.0.0.1:18790/health";
-const STANDALONE_ENGINE_TIMEOUT_SECS: u64 = 2;
+const STANDALONE_ENGINE_TIMEOUT_SECS: u64 = 8;
 
 fn standalone_engine_fallback_enabled() -> bool {
     cfg!(debug_assertions)
@@ -98,11 +203,12 @@ fn clear_daemon_port(app: &AppHandle) {
 pub fn spawn_daemon(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let app_handle = app.handle().clone();
     tauri::async_runtime::spawn(async move {
-        if standalone_engine_fallback_enabled() && standalone_engine_is_healthy().await {
+        if standalone_engine_fallback_enabled() && engine_gateway_is_healthy().await {
             eprintln!(
         "[pyrfor-sidecar] Debug standalone Engine enabled on port {STANDALONE_ENGINE_PORT}; skipping sidecar spawn."
       );
             set_daemon_port(&app_handle, STANDALONE_ENGINE_PORT);
+            let _ = app_handle.emit("daemon:ready", STANDALONE_ENGINE_PORT);
             return;
         }
 
@@ -111,7 +217,7 @@ pub fn spawn_daemon(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
-async fn standalone_engine_is_healthy() -> bool {
+async fn engine_gateway_is_healthy() -> bool {
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(STANDALONE_ENGINE_TIMEOUT_SECS))
         .build()
@@ -144,6 +250,25 @@ async fn run_daemon_supervisor(app: AppHandle) {
     let mut window_start = std::time::Instant::now();
 
     loop {
+        // Reuse an already-listening gateway instead of spawning a competing sidecar.
+        if engine_gateway_is_healthy().await {
+            eprintln!(
+                "[pyrfor-sidecar] Gateway already healthy on port {STANDALONE_ENGINE_PORT}; adopting."
+            );
+            set_daemon_port(&app, STANDALONE_ENGINE_PORT);
+            let _ = app.emit("daemon:ready", STANDALONE_ENGINE_PORT);
+            loop {
+                tokio::time::sleep(Duration::from_secs(15)).await;
+                if engine_gateway_is_healthy().await {
+                    continue;
+                }
+                eprintln!("[pyrfor-sidecar] Adopted gateway went offline; spawning sidecar.");
+                clear_daemon_port(&app);
+                let _ = app.emit("daemon:restarting", 0u32);
+                break;
+            }
+        }
+
         // Reset backoff counter if we've been stable longer than RESTART_WINDOW_SECS.
         if window_start.elapsed().as_secs() > RESTART_WINDOW_SECS {
             restart_count = 0;
@@ -439,6 +564,143 @@ async fn poll_ollama_health(app: AppHandle) {
         match client.get(OLLAMA_HEALTH_URL).send().await {
             Ok(resp) if resp.status().is_success() => {
                 let _ = app.emit("ollama:ready", ());
+                return;
+            }
+            _ => {}
+        }
+    }
+}
+
+// ─── MLX supervisor ───────────────────────────────────────────────────────────
+
+const MLX_MAX_RESTARTS: u32 = 3;
+const MLX_RESTART_WINDOW_SECS: u64 = 120;
+const MLX_HEALTH_URL: &str = "http://127.0.0.1:8080/v1/models";
+const MLX_HEALTH_POLL_SECS: u64 = 5;
+const MLX_MODEL: &str = "mlx-community/Qwen2.5-3B-Instruct-4bit";
+
+/// Spawns mlx_lm.server in the background. Skipped when `PYRFOR_MLX_AUTOSTART=false`
+/// or when no suitable python3 binary is found.
+pub fn spawn_mlx(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let app_handle = app.handle().clone();
+    tauri::async_runtime::spawn(async move {
+        run_mlx_supervisor(app_handle).await;
+    });
+    Ok(())
+}
+
+async fn run_mlx_supervisor(app: AppHandle) {
+    if std::env::var("PYRFOR_MLX_AUTOSTART")
+        .map(|v| v.eq_ignore_ascii_case("false") || v == "0")
+        .unwrap_or(false)
+    {
+        eprintln!("[pyrfor-mlx] PYRFOR_MLX_AUTOSTART disabled. Skipping.");
+        return;
+    }
+
+    let python = match resolve_python_binary() {
+        Some(p) => p,
+        None => {
+            eprintln!("[pyrfor-mlx] No python3 binary found. Emitting mlx:unavailable.");
+            let _ = app.emit("mlx:unavailable", "python3 not found");
+            return;
+        }
+    };
+
+    eprintln!("[pyrfor-mlx] Using python: {}", python.display());
+
+    let mut restart_count: u32 = 0;
+    let window_start = std::time::Instant::now();
+
+    loop {
+        if window_start.elapsed().as_secs() > MLX_RESTART_WINDOW_SECS {
+            restart_count = 0;
+        }
+
+        if restart_count >= MLX_MAX_RESTARTS {
+            eprintln!("[pyrfor-mlx] Too many restarts ({restart_count}). Giving up.");
+            let _ = app.emit("mlx:fatal", "mlx_lm server crashed too many times");
+            return;
+        }
+
+        if restart_count > 0 {
+            let delay = Duration::from_secs(2u64.pow(restart_count - 1));
+            eprintln!("[pyrfor-mlx] Restart #{restart_count}, waiting {delay:?}…");
+            tokio::time::sleep(delay).await;
+        }
+
+        match launch_mlx_once(&app, &python).await {
+            Ok(()) => return,
+            Err(e) => {
+                eprintln!("[pyrfor-mlx] Exited with error: {e}");
+                restart_count += 1;
+            }
+        }
+    }
+}
+
+fn resolve_python_binary() -> Option<std::path::PathBuf> {
+    find_in_path("python3").or_else(|| find_in_path("python"))
+}
+
+async fn launch_mlx_once(app: &AppHandle, python: &std::path::Path) -> Result<(), String> {
+    let mut child = tokio::process::Command::new(python)
+        .args([
+            "-m",
+            "mlx_lm",
+            "server",
+            "--model",
+            MLX_MODEL,
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8080",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn mlx_lm server: {e}"))?;
+
+    let app_clone = app.clone();
+    let health_handle = tauri::async_runtime::spawn(async move {
+        poll_mlx_health(app_clone).await;
+    });
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| format!("mlx_lm wait error: {e}"))?;
+
+    health_handle.abort();
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "mlx_lm exited with code {}",
+            status.code().unwrap_or(-1)
+        ))
+    }
+}
+
+async fn poll_mlx_health(app: AppHandle) {
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[pyrfor-mlx] Failed to build health client: {e}");
+            return;
+        }
+    };
+
+    loop {
+        tokio::time::sleep(Duration::from_secs(MLX_HEALTH_POLL_SECS)).await;
+        match client.get(MLX_HEALTH_URL).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                let _ = app.emit("mlx:ready", ());
                 return;
             }
             _ => {}

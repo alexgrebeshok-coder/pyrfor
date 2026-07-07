@@ -10,6 +10,9 @@ export interface RunPostMortem {
     schemaVersion: 'pyrfor.postmortem.v1';
     runId: string;
     conceptId: string;
+    projectId?: string;
+    parentConceptId?: string;
+    retryOf?: string;
     goal: string;
     outcome: 'completed' | 'failed' | 'cancelled' | 'blocked';
     summary: string;

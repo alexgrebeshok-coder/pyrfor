@@ -13,6 +13,7 @@ import type { PyrforRuntime } from './index';
 import { DurableMemoryContradictionError } from '../ai/memory/agent-memory-store';
 import { createRuntimeGateway, type GatewayDeps } from './gateway';
 import { approvalFlow } from './approval-flow';
+import { ProviderRouter } from './provider-router';
 import type { ConceptRecord, UniversalEngineOrchestrator } from './universal/engine-loop';
 
 // Silence logger output during tests
@@ -3731,6 +3732,17 @@ describe('Mini App routes', () => {
       expect(Array.isArray(d['recentActivity'])).toBe(true);
     });
 
+    // Regression for the "false green" lesson: costToday must NOT be fed by the
+    // optional token-budget controller (a per-worker budget) nor by a mock. With
+    // no provider router wired it stays null — an explicit "not connected"
+    // signal, never a fake 0. The real aggregation path is exercised in the
+    // 'dashboard costToday (real runtime spend)' suite below.
+    it('GET /api/dashboard → costToday is null when no provider router is wired', async () => {
+      const { status, body } = await get(port, '/api/dashboard');
+      expect(status).toBe(200);
+      expect((body as Record<string, unknown>).costToday).toBeNull();
+    });
+
     it('GET /api/connectors/inventory returns local-only connector inventory', async () => {
       const { status, body } = await get(port, '/api/connectors/inventory');
       expect(status).toBe(200);
@@ -6027,5 +6039,82 @@ describe('Mini App routes', () => {
     expect(typeof d['uptime']).toBe('number');
     expect(d).toHaveProperty('costToday');
     expect(d).toHaveProperty('sessionsCount');
+  });
+});
+
+// ── Real runtime cost aggregation (variant A) ───────────────────────────────
+// Lesson: green tests ≠ working feature. The dashboard's costToday is fed by a
+// REAL provider router (the same cost log as getSessionCost), not a mock and not
+// the per-worker token budget. These tests drive the real path end-to-end: a
+// real chat call writes to the cost log, and the gateway surfaces the same sum.
+describe('dashboard costToday (real runtime spend)', () => {
+  let port: number;
+  let gw: ReturnType<typeof createRuntimeGateway>;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    approvalFlow.resetForTests();
+    tmpDir = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-gw-cost-'));
+  });
+
+  afterEach(async () => {
+    if (gw) await gw.stop();
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it('aggregates real provider spend logged today (not a mock)', async () => {
+    // Real provider router + real chat → logCost records a non-zero spend for
+    // today (openai carries a non-zero rate in estimateCost).
+    const router = new ProviderRouter({ maxRetries: 1, timeoutMs: 5000 });
+    router.register('openai', {
+      name: 'openai',
+      models: ['gpt-4o-mini'],
+      chat: vi.fn().mockResolvedValue('openai real response with enough tokens to bill'),
+    });
+    await router.chat(
+      [{ role: 'user', content: 'charge the real cost ledger please' }] as Parameters<typeof router.chat>[0],
+      { provider: 'openai', sessionId: 'e2e-spend' },
+    );
+    // The aggregation mechanism itself works on the real cost log.
+    expect(router.getTodaysCost()).toBeGreaterThan(0);
+
+    gw = createRuntimeGateway({
+      config: makeConfig(),
+      runtime: makeRuntime(),
+      goalStore: new GoalStore(tmpDir),
+      approvalSettingsPath: pathModule.join(tmpDir, 'approval-settings.json'),
+      staticDir: ACTUAL_STATIC_DIR,
+      providerRouter: router,
+    });
+    await gw.start();
+    port = gw.port;
+
+    const { status, body } = await get(port, '/api/dashboard');
+    expect(status).toBe(200);
+    const costToday = (body as Record<string, unknown>).costToday;
+    // Wired end-to-end: the dashboard surfaces the SAME real sum the router
+    // computes — not a mock, not a parallel ledger, never a fake 0.
+    expect(costToday).toBe(router.getTodaysCost());
+    expect(costToday as number).toBeGreaterThan(0);
+  });
+
+  it('is 0 when the runtime has logged no spend today', async () => {
+    const router = new ProviderRouter({ maxRetries: 1, timeoutMs: 5000 });
+    expect(router.getTodaysCost()).toBe(0);
+
+    gw = createRuntimeGateway({
+      config: makeConfig(),
+      runtime: makeRuntime(),
+      goalStore: new GoalStore(tmpDir),
+      approvalSettingsPath: pathModule.join(tmpDir, 'approval-settings.json'),
+      staticDir: ACTUAL_STATIC_DIR,
+      providerRouter: router,
+    });
+    await gw.start();
+    port = gw.port;
+
+    const { status, body } = await get(port, '/api/dashboard');
+    expect(status).toBe(200);
+    expect((body as Record<string, unknown>).costToday).toBe(0);
   });
 });

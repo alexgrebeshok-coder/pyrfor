@@ -97,6 +97,9 @@ export interface TokenBudgetController {
   usageFor(rule: BudgetRule): WindowUsage;
   reportSnapshot(): BudgetSnapshot;
 
+  /** Total USD cost recorded since the start of the current UTC day. */
+  getTodaysCost(): number;
+
   flush(): Promise<void>;
   reset(scope?: BudgetScope): void;
 
@@ -396,6 +399,17 @@ export function createTokenBudgetController(
     return { rules: ruleSnapshots, totalConsumption, totalCostUsd };
   }
 
+  function getTodaysCost(): number {
+    // Same window math as usageForRule for window='day': start of the current UTC day.
+    const start = windowStart('day', clock());
+    let costUsd = 0;
+    for (const c of consumptions) {
+      if (c.ts < start) continue;
+      costUsd += c.costUsd;
+    }
+    return costUsd;
+  }
+
   async function flush(): Promise<void> {
     if (flushTimer !== null) {
       clearTimeout(flushTimer);
@@ -431,6 +445,7 @@ export function createTokenBudgetController(
     recordConsumption,
     usageFor,
     reportSnapshot,
+    getTodaysCost,
     flush,
     reset,
     on,

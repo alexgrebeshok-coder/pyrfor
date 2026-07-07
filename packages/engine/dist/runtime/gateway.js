@@ -67,6 +67,13 @@ import { createDefaultRegistry, tokenize as tokenizeSlashCommand } from './slash
 import { createDefaultProductFactory, isProductFactoryTemplateId } from './product-factory.js';
 import { CONCEPT_ID_PATTERN } from './universal/engine-loop.js';
 import { createToolRegistry } from './universal/tool-registry.js';
+import { loadBlock } from './block-loader.js';
+import { BlockRegistry } from './block-registry.js';
+import { buildKsReconciliationFinalReport, buildKsReconciliationReviewPack, reviewKsReconciliationFinding, } from './ks-reconciliation-fixture.js';
+import { createMcpClient } from './mcp-client.js';
+import { McpLifecycleManagerStub } from './mcp-lifecycle-manager.js';
+import { McpRestartRejectedError } from './mcp-restart-error.js';
+import { getEngineTracer } from '../observability/engine-telemetry.js';
 function publicSlashCommandSummary(command) {
     if (command.permissionClass !== 'auto_allow')
         return null;
@@ -91,6 +98,17 @@ const MIME_MAP = {
 };
 const fallbackProductFactory = createDefaultProductFactory();
 let fallbackUniversalToolRegistry;
+const gatewayBlockRegistry = new BlockRegistry();
+const ksReviewPackByRun = new Map();
+let defaultMcpLifecycle = null;
+function resolveMcpLifecycle(deps) {
+    if (deps.mcpLifecycle)
+        return deps.mcpLifecycle;
+    if (!defaultMcpLifecycle) {
+        defaultMcpLifecycle = new McpLifecycleManagerStub(createMcpClient());
+    }
+    return defaultMcpLifecycle;
+}
 function resolveDefaultStaticDir() {
     try {
         const __filename = fileURLToPath(import.meta.url);
@@ -1960,7 +1978,7 @@ export function createRuntimeGateway(deps) {
     // ─── Server ────────────────────────────────────────────────────────────
     const server = createServer((req, res) => __awaiter(this, void 0, void 0, function* () {
         var _a, e_1, _b, _c;
-        var _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74, _75, _76, _77, _78, _79, _80, _81, _82, _83, _84, _85, _86, _87, _88, _89, _90, _91, _92, _93, _94, _95, _96, _97, _98, _99, _100, _101, _102, _103, _104, _105, _106, _107, _108;
+        var _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74, _75, _76, _77, _78, _79, _80, _81, _82, _83, _84, _85, _86, _87, _88, _89, _90, _91, _92, _93, _94, _95, _96, _97, _98, _99, _100, _101, _102, _103, _104, _105, _106, _107, _108, _109, _110, _111, _112, _113, _114, _115, _116, _117, _118;
         const parsed = parseUrl((_d = req.url) !== null && _d !== void 0 ? _d : '/', true);
         const method = (_e = req.method) !== null && _e !== void 0 ? _e : 'GET';
         const pathname = (_f = parsed.pathname) !== null && _f !== void 0 ? _f : '/';
@@ -2112,7 +2130,7 @@ export function createRuntimeGateway(deps) {
                     return;
                 }
             }
-            catch (_109) {
+            catch (_119) {
                 sendJson(res, 404, { error: 'not_found' });
                 return;
             }
@@ -2140,7 +2158,7 @@ export function createRuntimeGateway(deps) {
                     const rStats = (_t = (_s = runtime).getStats) === null || _t === void 0 ? void 0 : _t.call(_s);
                     sessionsCount = (_v = (_u = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _u === void 0 ? void 0 : _u.active) !== null && _v !== void 0 ? _v : 0;
                 }
-                catch ( /* not critical */_110) { /* not critical */ }
+                catch ( /* not critical */_120) { /* not critical */ }
                 const activeGoals = goalStore.list('active').slice(0, 3);
                 const recentActivity = goalStore.list().slice(-10).reverse();
                 const model = (_x = (_w = config.providers) === null || _w === void 0 ? void 0 : _w.defaultProvider) !== null && _x !== void 0 ? _x : 'unknown';
@@ -2936,7 +2954,7 @@ export function createRuntimeGateway(deps) {
                 const rStats = (_29 = (_28 = runtime).getStats) === null || _29 === void 0 ? void 0 : _29.call(_28);
                 sessionsCount = (_31 = (_30 = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _30 === void 0 ? void 0 : _30.active) !== null && _31 !== void 0 ? _31 : 0;
             }
-            catch ( /* not critical */_111) { /* not critical */ }
+            catch ( /* not critical */_121) { /* not critical */ }
             // TODO: wire LLM cost accumulator (#dashboard-cost)
             sendJson(res, 200, {
                 costToday: null,
@@ -3007,7 +3025,7 @@ export function createRuntimeGateway(deps) {
                         return;
                     }
                 }
-                catch (_112) {
+                catch (_122) {
                     sendJson(res, 400, { error: 'workspace path does not exist', code: 'ENOENT' });
                     return;
                 }
@@ -5140,7 +5158,7 @@ export function createRuntimeGateway(deps) {
                     let firstEvent = true;
                     let emittedAny = false;
                     try {
-                        for (var _113 = true, _114 = __asyncValues(runtime.streamChatRequest({
+                        for (var _123 = true, _124 = __asyncValues(runtime.streamChatRequest({
                             text: bodyText,
                             openFiles: bodyOpenFiles,
                             workspace: bodyWorkspace !== null && bodyWorkspace !== void 0 ? bodyWorkspace : fsConfig.workspaceRoot,
@@ -5149,9 +5167,9 @@ export function createRuntimeGateway(deps) {
                             routingHints: bodyRoutingHints,
                             worker: effectiveWorker,
                             exposeToolPayloads: bodyExposeToolPayloads,
-                        })), _115; _115 = yield _114.next(), _a = _115.done, !_a; _113 = true) {
-                            _c = _115.value;
-                            _113 = false;
+                        })), _125; _125 = yield _124.next(), _a = _125.done, !_a; _123 = true) {
+                            _c = _125.value;
+                            _123 = false;
                             const event = _c;
                             const wrapped = firstEvent && attachments.length > 0
                                 ? Object.assign(Object.assign({}, event), { attachments }) : event;
@@ -5163,7 +5181,7 @@ export function createRuntimeGateway(deps) {
                     catch (e_1_1) { e_1 = { error: e_1_1 }; }
                     finally {
                         try {
-                            if (!_113 && !_a && (_b = _114.return)) yield _b.call(_114);
+                            if (!_123 && !_a && (_b = _124.return)) yield _b.call(_124);
                         }
                         finally { if (e_1) throw e_1.error; }
                     }
@@ -5204,6 +5222,198 @@ export function createRuntimeGateway(deps) {
                 catch (err) {
                     const message = err instanceof Error ? err.message : 'Transcription failed';
                     sendJson(res, 500, { error: message });
+                }
+                return;
+            }
+            // GET /api/mcp/status
+            if (method === 'GET' && pathname === '/api/mcp/status') {
+                const mcpLifecycle = resolveMcpLifecycle(deps);
+                const servers = yield Promise.all(mcpLifecycle.getRegisteredServerNames().map((name) => __awaiter(this, void 0, void 0, function* () {
+                    const healthy = yield mcpLifecycle.healthCheck(name);
+                    return {
+                        name,
+                        healthy,
+                        configured: true,
+                        connected: healthy,
+                        toolCount: mcpLifecycle.listToolCount(name),
+                    };
+                })));
+                sendJson(res, 200, { servers });
+                return;
+            }
+            // POST /api/mcp/servers/:name/restart
+            if (method === 'POST' && pathname.startsWith('/api/mcp/servers/') && pathname.endsWith('/restart')) {
+                const name = decodeURIComponent(pathname.slice('/api/mcp/servers/'.length, -'/restart'.length));
+                if (!name) {
+                    sendJson(res, 400, { error: 'server name required' });
+                    return;
+                }
+                const mcpLifecycle = resolveMcpLifecycle(deps);
+                try {
+                    yield mcpLifecycle.restart(name);
+                    sendJson(res, 200, { ok: true, name });
+                }
+                catch (err) {
+                    if (err instanceof McpRestartRejectedError) {
+                        sendJson(res, err.code === 'mcp_server_unknown' ? 404 : 503, { error: err.message, code: err.code });
+                        return;
+                    }
+                    const message = err instanceof Error ? err.message : 'MCP restart failed';
+                    sendJson(res, 500, { error: message });
+                }
+                return;
+            }
+            // POST /api/mcp/servers/:name/health-check
+            if (method === 'POST' && pathname.startsWith('/api/mcp/servers/') && pathname.endsWith('/health-check')) {
+                const name = decodeURIComponent(pathname.slice('/api/mcp/servers/'.length, -'/health-check'.length));
+                if (!name) {
+                    sendJson(res, 400, { error: 'server name required' });
+                    return;
+                }
+                const mcpLifecycle = resolveMcpLifecycle(deps);
+                const healthy = yield mcpLifecycle.healthCheck(name);
+                sendJson(res, 200, { name, healthy });
+                return;
+            }
+            // GET /api/telemetry/spans?limit=50&runId=optional
+            if (method === 'GET' && pathname === '/api/telemetry/spans') {
+                const limit = parseIntQuery(query['limit'], 50, 200);
+                const runIdFilter = (_105 = firstQueryValue(query['runId'])) === null || _105 === void 0 ? void 0 : _105.trim();
+                let spans = getEngineTracer().recent(limit);
+                if (runIdFilter) {
+                    spans = spans.filter((span) => {
+                        var _a;
+                        const runId = (_a = span.attrs['run.id']) !== null && _a !== void 0 ? _a : span.attrs.runId;
+                        return runId === runIdFilter;
+                    });
+                }
+                sendJson(res, 200, {
+                    limit,
+                    spans: spans.map((span) => ({
+                        id: span.id,
+                        traceId: span.traceId,
+                        parentId: span.parentId,
+                        name: span.name,
+                        startMs: span.startMs,
+                        endMs: span.endMs,
+                        durationMs: span.durationMs,
+                        attrs: span.attrs,
+                        events: span.events,
+                        status: span.status,
+                        error: span.error,
+                    })),
+                });
+                return;
+            }
+            // POST /api/blocks/load  body: { path, projectId?, runId? }
+            if (method === 'POST' && pathname === '/api/blocks/load') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const body = parsed.value;
+                if (!body.path) {
+                    sendJson(res, 400, { error: 'path required' });
+                    return;
+                }
+                const result = yield loadBlock(body.path, {
+                    registry: gatewayBlockRegistry,
+                    projectId: body.projectId,
+                    runId: body.runId,
+                    ledger: (_106 = deps.orchestration) === null || _106 === void 0 ? void 0 : _106.eventLedger,
+                    artifactStore: (_107 = deps.orchestration) === null || _107 === void 0 ? void 0 : _107.artifactStore,
+                });
+                sendJson(res, result.ok ? 200 : 400, result);
+                return;
+            }
+            // POST /api/ks/reconciliation/review-pack  body: { runId?, fixturePath? }
+            if (method === 'POST' && pathname === '/api/ks/reconciliation/review-pack') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const body = parsed.value;
+                const runId = ((_108 = body.runId) === null || _108 === void 0 ? void 0 : _108.trim()) || `ks-${randomUUID()}`;
+                const cached = ksReviewPackByRun.get(runId);
+                const reviewPack = cached !== null && cached !== void 0 ? cached : buildKsReconciliationReviewPack(runId, body.fixturePath ? { fixturePath: body.fixturePath } : {});
+                if (!cached)
+                    ksReviewPackByRun.set(runId, reviewPack);
+                sendJson(res, 200, reviewPack);
+                return;
+            }
+            // POST /api/ks/reconciliation/review  body: per-finding review
+            if (method === 'POST' && pathname === '/api/ks/reconciliation/review') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const body = parsed.value;
+                if (!body.runId || !body.findingId || !body.action || !body.reviewerId) {
+                    sendJson(res, 400, { error: 'runId, findingId, action, and reviewerId required' });
+                    return;
+                }
+                try {
+                    let reviewPack = (_109 = ksReviewPackByRun.get(body.runId)) !== null && _109 !== void 0 ? _109 : buildKsReconciliationReviewPack(body.runId, {});
+                    reviewPack = reviewKsReconciliationFinding(reviewPack, {
+                        findingId: body.findingId,
+                        action: body.action,
+                        reviewerId: body.reviewerId,
+                        reviewedAt: (_110 = body.reviewedAt) !== null && _110 !== void 0 ? _110 : new Date().toISOString(),
+                        reviewerComment: (_111 = body.reviewerComment) !== null && _111 !== void 0 ? _111 : null,
+                    });
+                    ksReviewPackByRun.set(body.runId, reviewPack);
+                    const finding = reviewPack.findings.find((item) => item.finding_id === body.findingId);
+                    sendJson(res, 200, { reviewPack, finding });
+                }
+                catch (err) {
+                    const message = err instanceof Error ? err.message : 'KS reconciliation review failed';
+                    const status = message.includes('requires reviewerComment') ? 400 : 404;
+                    sendJson(res, status, { error: message });
+                }
+                return;
+            }
+            // POST /api/ks/reconciliation/finalize  body: { runId, approvalId, reviews[] }
+            if (method === 'POST' && pathname === '/api/ks/reconciliation/finalize') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const body = parsed.value;
+                if (!body.runId || !body.approvalId) {
+                    sendJson(res, 400, { error: 'runId and approvalId required' });
+                    return;
+                }
+                let reviewPack = (_112 = ksReviewPackByRun.get(body.runId)) !== null && _112 !== void 0 ? _112 : buildKsReconciliationReviewPack(body.runId, {});
+                const explicitReviews = Array.isArray(body.reviews) ? body.reviews : [];
+                if (explicitReviews.length === 0 && reviewPack.reviewHistory.length === 0) {
+                    sendJson(res, 400, { error: 'reviews[] required when no cached review history exists' });
+                    return;
+                }
+                try {
+                    for (const review of explicitReviews) {
+                        reviewPack = reviewKsReconciliationFinding(reviewPack, {
+                            findingId: review.findingId,
+                            action: review.action,
+                            reviewerId: review.reviewerId,
+                            reviewedAt: (_113 = review.reviewedAt) !== null && _113 !== void 0 ? _113 : new Date().toISOString(),
+                            reviewerComment: (_114 = review.reviewerComment) !== null && _114 !== void 0 ? _114 : null,
+                        });
+                    }
+                    const report = buildKsReconciliationFinalReport(body.runId, body.approvalId, reviewPack);
+                    ksReviewPackByRun.delete(body.runId);
+                    sendJson(res, 200, report);
+                }
+                catch (err) {
+                    const message = err instanceof Error ? err.message : 'KS reconciliation finalize failed';
+                    sendJson(res, 400, { error: message });
                 }
                 return;
             }
@@ -5284,7 +5494,7 @@ export function createRuntimeGateway(deps) {
             if (method === 'GET' && pathname === '/api/git/file') {
                 const workspace = query['workspace'];
                 const filePath = query['path'];
-                const ref = (_105 = query['ref']) !== null && _105 !== void 0 ? _105 : 'HEAD';
+                const ref = (_115 = query['ref']) !== null && _115 !== void 0 ? _115 : 'HEAD';
                 if (!workspace) {
                     sendJson(res, 400, { error: 'workspace query param required' });
                     return;
@@ -5383,7 +5593,7 @@ export function createRuntimeGateway(deps) {
             // GET /api/git/log?workspace=...&limit=50
             if (method === 'GET' && pathname === '/api/git/log') {
                 const workspace = query['workspace'];
-                const limit = parseInt((_106 = query['limit']) !== null && _106 !== void 0 ? _106 : '50', 10);
+                const limit = parseInt((_116 = query['limit']) !== null && _116 !== void 0 ? _116 : '50', 10);
                 if (!workspace) {
                     sendJson(res, 400, { error: 'workspace query param required' });
                     return;
@@ -5465,7 +5675,7 @@ export function createRuntimeGateway(deps) {
                     res.writeHead(204);
                     res.end();
                 }
-                catch (_116) {
+                catch (_126) {
                     sendJson(res, 404, { error: 'PTY not found' });
                 }
                 return;
@@ -5530,7 +5740,7 @@ export function createRuntimeGateway(deps) {
                 const body = parsed.value;
                 const localFirst = typeof body.localFirst === 'boolean' ? body.localFirst : false;
                 const localOnly = typeof body.localOnly === 'boolean' ? body.localOnly : false;
-                (_108 = (_107 = router).setLocalMode) === null || _108 === void 0 ? void 0 : _108.call(_107, { localFirst, localOnly });
+                (_118 = (_117 = router).setLocalMode) === null || _118 === void 0 ? void 0 : _118.call(_117, { localFirst, localOnly });
                 try {
                     const { config: latest, path: cfgPath } = yield loadConfig();
                     const updated = Object.assign(Object.assign({}, latest), { ai: Object.assign(Object.assign({}, latest.ai), { localFirst, localOnly }) });

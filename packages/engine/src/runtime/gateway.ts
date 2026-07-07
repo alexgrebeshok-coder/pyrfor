@@ -72,6 +72,7 @@ import type { DagNode, DurableDag } from './durable-dag';
 import type { EventLedger, LedgerEvent } from './event-ledger';
 import type { RunLedger } from './run-ledger';
 import type { RunRecord } from './run-lifecycle';
+import type { TokenBudgetController } from './token-budget-controller';
 import type { ContextPack } from './context-pack';
 import { listSkillCatalog, recommendSkillsPreview } from './skill-inspector';
 import { importSkillMdToRegistry, listPublicToolRegistry } from './skill-importer';
@@ -88,7 +89,12 @@ import {
   buildKsReconciliationFinalReport,
   buildKsReconciliationReviewPack,
   reviewKsReconciliationFinding,
+  type KsReconciliationReviewPack,
 } from './ks-reconciliation-fixture';
+import { createMcpClient } from './mcp-client.js';
+import { McpLifecycleManagerStub, type McpLifecycleManager } from './mcp-lifecycle-manager.js';
+import { McpRestartRejectedError } from './mcp-restart-error.js';
+import { getEngineTracer } from '../observability/engine-telemetry.js';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -147,6 +153,12 @@ export interface GatewayDeps {
     getLocalMode(): { localFirst: boolean; localOnly: boolean };
     getRoutingPreview?(): ProviderRoutingPreview;
     refreshFromEnvironment?(): void;
+    /**
+     * Real runtime USD spend since UTC midnight, aggregated from the
+     * provider-router cost log (the same ledger as getSessionCost). Powers
+     * the dashboard's `costToday`. Distinct from any per-worker budget.
+     */
+    getTodaysCost(): number;
   };
   approvalFlow?: {
     getPending(): ApprovalRequest[];
@@ -182,7 +194,13 @@ export interface GatewayDeps {
     getSnapshot(): ConnectorInventorySnapshot;
     probeStatus?(connectorId: string): Promise<ConnectorStatus | null>;
   };
+  /**
+   * Optional token/cost budget controller. When provided, the dashboard exposes
+   * today's accumulated USD cost via `costToday`; otherwise it stays `null`.
+   */
+  tokenBudget?: Pick<TokenBudgetController, 'getTodaysCost'>;
   configPath?: string;
+  mcpLifecycle?: McpLifecycleManager;
 }
 
 export interface GatewayHandle {
@@ -207,6 +225,17 @@ const MIME_MAP: Record<string, string> = {
 const fallbackProductFactory = createDefaultProductFactory();
 let fallbackUniversalToolRegistry: UniversalToolRegistry | undefined;
 const gatewayBlockRegistry = new BlockRegistry();
+const ksReviewPackByRun = new Map<string, KsReconciliationReviewPack>();
+
+let defaultMcpLifecycle: McpLifecycleManager | null = null;
+
+function resolveMcpLifecycle(deps: GatewayDeps): McpLifecycleManager {
+  if (deps.mcpLifecycle) return deps.mcpLifecycle;
+  if (!defaultMcpLifecycle) {
+    defaultMcpLifecycle = new McpLifecycleManagerStub(createMcpClient());
+  }
+  return defaultMcpLifecycle;
+}
 
 function resolveDefaultStaticDir(): string {
   try {
@@ -2760,8 +2789,17 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       if (!enforceAuth(req, res, query)) return;
       try {
         let sessionsCount = 0;
-        // TODO: wire LLM cost accumulator (#dashboard-cost)
         let costToday: number | null = null;
+        try {
+          // Real runtime spend today, aggregated by the provider router from
+          // the same cost log as getSessionCost/getTotalCost. Wired in
+          // ensureGatewayStarted via `providerRouter`, so in the live runtime
+          // this is never null. Deliberately NOT the per-worker token budget —
+          // those are separate concerns and must not be mixed.
+          if (deps.providerRouter) {
+            costToday = deps.providerRouter.getTodaysCost();
+          }
+        } catch { /* not critical */ }
         try {
           const rStats = (runtime as unknown as { getStats?: () => { sessions?: { active?: number } } }).getStats?.();
           sessionsCount = rStats?.sessions?.active ?? 0;
@@ -3603,9 +3641,16 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         const rStats = (runtime as unknown as { getStats?: () => { sessions?: { active?: number } } }).getStats?.();
         sessionsCount = rStats?.sessions?.active ?? 0;
       } catch { /* not critical */ }
-      // TODO: wire LLM cost accumulator (#dashboard-cost)
+      // Real runtime spend today (same source as /api/dashboard). null only
+      // when no provider router is wired — never a fake 0.
+      let costToday: number | null = null;
+      try {
+        if (deps.providerRouter) {
+          costToday = deps.providerRouter.getTodaysCost();
+        }
+      } catch { /* not critical */ }
       sendJson(res, 200, {
-        costToday: null,
+        costToday,
         sessionsCount,
         uptime: process.uptime(),
       });
@@ -5784,6 +5829,84 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
 
+      // GET /api/mcp/status
+      if (method === 'GET' && pathname === '/api/mcp/status') {
+        const mcpLifecycle = resolveMcpLifecycle(deps);
+        const servers = await Promise.all(
+          mcpLifecycle.getRegisteredServerNames().map(async (name) => {
+            const healthy = await mcpLifecycle.healthCheck(name);
+            return {
+              name,
+              healthy,
+              configured: true,
+              connected: healthy,
+              toolCount: mcpLifecycle.listToolCount(name),
+            };
+          }),
+        );
+        sendJson(res, 200, { servers });
+        return;
+      }
+
+      // POST /api/mcp/servers/:name/restart
+      if (method === 'POST' && pathname.startsWith('/api/mcp/servers/') && pathname.endsWith('/restart')) {
+        const name = decodeURIComponent(pathname.slice('/api/mcp/servers/'.length, -'/restart'.length));
+        if (!name) { sendJson(res, 400, { error: 'server name required' }); return; }
+        const mcpLifecycle = resolveMcpLifecycle(deps);
+        try {
+          await mcpLifecycle.restart(name);
+          sendJson(res, 200, { ok: true, name });
+        } catch (err) {
+          if (err instanceof McpRestartRejectedError) {
+            sendJson(res, err.code === 'mcp_server_unknown' ? 404 : 503, { error: err.message, code: err.code });
+            return;
+          }
+          const message = err instanceof Error ? err.message : 'MCP restart failed';
+          sendJson(res, 500, { error: message });
+        }
+        return;
+      }
+
+      // POST /api/mcp/servers/:name/health-check
+      if (method === 'POST' && pathname.startsWith('/api/mcp/servers/') && pathname.endsWith('/health-check')) {
+        const name = decodeURIComponent(pathname.slice('/api/mcp/servers/'.length, -'/health-check'.length));
+        if (!name) { sendJson(res, 400, { error: 'server name required' }); return; }
+        const mcpLifecycle = resolveMcpLifecycle(deps);
+        const healthy = await mcpLifecycle.healthCheck(name);
+        sendJson(res, 200, { name, healthy });
+        return;
+      }
+
+      // GET /api/telemetry/spans?limit=50&runId=optional
+      if (method === 'GET' && pathname === '/api/telemetry/spans') {
+        const limit = parseIntQuery(query['limit'], 50, 200);
+        const runIdFilter = firstQueryValue(query['runId'])?.trim();
+        let spans = getEngineTracer().recent(limit);
+        if (runIdFilter) {
+          spans = spans.filter((span) => {
+            const runId = span.attrs['run.id'] ?? span.attrs.runId;
+            return runId === runIdFilter;
+          });
+        }
+        sendJson(res, 200, {
+          limit,
+          spans: spans.map((span) => ({
+            id: span.id,
+            traceId: span.traceId,
+            parentId: span.parentId,
+            name: span.name,
+            startMs: span.startMs,
+            endMs: span.endMs,
+            durationMs: span.durationMs,
+            attrs: span.attrs,
+            events: span.events,
+            status: span.status,
+            error: span.error,
+          })),
+        });
+        return;
+      }
+
       // POST /api/blocks/load  body: { path, projectId?, runId? }
       if (method === 'POST' && pathname === '/api/blocks/load') {
         const raw = await readBody(req);
@@ -5809,8 +5932,48 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
         const body = parsed.value as { runId?: string; fixturePath?: string };
         const runId = body.runId?.trim() || `ks-${randomUUID()}`;
-        const reviewPack = buildKsReconciliationReviewPack(runId, body.fixturePath ? { fixturePath: body.fixturePath } : {});
+        const cached = ksReviewPackByRun.get(runId);
+        const reviewPack = cached ?? buildKsReconciliationReviewPack(runId, body.fixturePath ? { fixturePath: body.fixturePath } : {});
+        if (!cached) ksReviewPackByRun.set(runId, reviewPack);
         sendJson(res, 200, reviewPack);
+        return;
+      }
+
+      // POST /api/ks/reconciliation/review  body: per-finding review
+      if (method === 'POST' && pathname === '/api/ks/reconciliation/review') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as {
+          runId?: string;
+          findingId?: string;
+          action?: 'accept' | 'reject' | 'defer' | 'escalate';
+          reviewerId?: string;
+          reviewerComment?: string;
+          reviewedAt?: string;
+        };
+        if (!body.runId || !body.findingId || !body.action || !body.reviewerId) {
+          sendJson(res, 400, { error: 'runId, findingId, action, and reviewerId required' });
+          return;
+        }
+        try {
+          let reviewPack = ksReviewPackByRun.get(body.runId)
+            ?? buildKsReconciliationReviewPack(body.runId, {});
+          reviewPack = reviewKsReconciliationFinding(reviewPack, {
+            findingId: body.findingId,
+            action: body.action,
+            reviewerId: body.reviewerId,
+            reviewedAt: body.reviewedAt ?? new Date().toISOString(),
+            reviewerComment: body.reviewerComment ?? null,
+          });
+          ksReviewPackByRun.set(body.runId, reviewPack);
+          const finding = reviewPack.findings.find((item) => item.finding_id === body.findingId);
+          sendJson(res, 200, { reviewPack, finding });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'KS reconciliation review failed';
+          const status = message.includes('requires reviewerComment') ? 400 : 404;
+          sendJson(res, status, { error: message });
+        }
         return;
       }
 
@@ -5830,22 +5993,34 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
             reviewerComment?: string;
           }>;
         };
-        if (!body.runId || !body.approvalId || !Array.isArray(body.reviews)) {
-          sendJson(res, 400, { error: 'runId, approvalId, and reviews[] required' });
+        if (!body.runId || !body.approvalId) {
+          sendJson(res, 400, { error: 'runId and approvalId required' });
           return;
         }
-        let reviewPack = buildKsReconciliationReviewPack(body.runId, {});
-        for (const review of body.reviews) {
-          reviewPack = reviewKsReconciliationFinding(reviewPack, {
-            findingId: review.findingId,
-            action: review.action,
-            reviewerId: review.reviewerId,
-            reviewedAt: review.reviewedAt ?? new Date().toISOString(),
-            reviewerComment: review.reviewerComment ?? null,
-          });
+        let reviewPack = ksReviewPackByRun.get(body.runId)
+          ?? buildKsReconciliationReviewPack(body.runId, {});
+        const explicitReviews = Array.isArray(body.reviews) ? body.reviews : [];
+        if (explicitReviews.length === 0 && reviewPack.reviewHistory.length === 0) {
+          sendJson(res, 400, { error: 'reviews[] required when no cached review history exists' });
+          return;
         }
-        const report = buildKsReconciliationFinalReport(body.runId, body.approvalId, reviewPack);
-        sendJson(res, 200, report);
+        try {
+          for (const review of explicitReviews) {
+            reviewPack = reviewKsReconciliationFinding(reviewPack, {
+              findingId: review.findingId,
+              action: review.action,
+              reviewerId: review.reviewerId,
+              reviewedAt: review.reviewedAt ?? new Date().toISOString(),
+              reviewerComment: review.reviewerComment ?? null,
+            });
+          }
+          const report = buildKsReconciliationFinalReport(body.runId, body.approvalId, reviewPack);
+          ksReviewPackByRun.delete(body.runId);
+          sendJson(res, 200, report);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'KS reconciliation finalize failed';
+          sendJson(res, 400, { error: message });
+        }
         return;
       }
 

@@ -7,11 +7,12 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import nodemailer from "nodemailer";
 const DEFAULT_SMTP_PORT = 587;
 const DEFAULT_SECURE_SMTP_PORT = 465;
 let transportFactory = createNodeMailerTransport;
 function createNodeMailerTransport(config) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const nodemailer = require("nodemailer");
     return nodemailer.createTransport({
         host: config.host,
         port: config.port,

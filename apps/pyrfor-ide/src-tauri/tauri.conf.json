@@ -1,12 +1,12 @@
 {
   "build": {
-    "beforeBuildCommand": "cd .. && npm run build",
+    "beforeBuildCommand": "cd .. && npm run build:sidecar && npm run build:web",
     "beforeDevCommand": "cd .. && npm run dev:web",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../web/dist"
   },
   "productName": "Pyrfor",
-  "version": "0.3.0",
+  "version": "0.4.0-rc.1",
   "identifier": "dev.pyrfor.ide",
   "app": {
     "security": {
@@ -31,9 +31,15 @@
     "category": "DeveloperTool",
     "copyright": "2026 Pyrfor",
     "createUpdaterArtifacts": true,
-    "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"],
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "targets": "dmg",
-    "externalBin": ["binaries/pyrfor-daemon"],
+    "externalBin": [
+      "binaries/pyrfor-daemon"
+    ],
     "resources": {
       "binaries/_runtime": "_runtime",
       "binaries/_app": "_app"

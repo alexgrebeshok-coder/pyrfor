@@ -15,7 +15,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { stat } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 const execFileAsync = promisify(execFile);
 // ─── Validation helpers ────────────────────────────────────────────────────
@@ -52,6 +52,19 @@ export function validateRelPath(p) {
     for (const part of parts) {
         if (part === '..')
             throw new Error(`path must not contain ..: ${p}`);
+    }
+}
+function validateBranch(branch) {
+    if (!branch || !branch.trim()) {
+        throw new Error('branch must not be empty');
+    }
+    if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.includes('..') || branch.startsWith('-') || branch.endsWith('/')) {
+        throw new Error(`invalid branch: ${branch}`);
+    }
+}
+function validateAbsoluteDir(label, dir) {
+    if (!path.isAbsolute(dir)) {
+        throw new Error(`${label} must be an absolute path: ${dir}`);
     }
 }
 // ─── Porcelain v2 parser ───────────────────────────────────────────────────
@@ -166,6 +179,40 @@ export function gitHeadSha(workspace) {
         return stdout.trim();
     });
 }
+export function gitRepoRoot(workspace) {
+    return __awaiter(this, void 0, void 0, function* () {
+        yield validateWorkspace(workspace);
+        const { stdout } = yield execFileAsync('git', ['rev-parse', '--show-toplevel'], {
+            cwd: workspace,
+            maxBuffer: 1024 * 1024,
+        });
+        return stdout.trim();
+    });
+}
+export function gitCurrentBranch(workspace) {
+    return __awaiter(this, void 0, void 0, function* () {
+        yield validateWorkspace(workspace);
+        try {
+            const { stdout } = yield execFileAsync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], {
+                cwd: workspace,
+                maxBuffer: 1024 * 1024,
+            });
+            const branch = stdout.trim();
+            if (!branch) {
+                throw new Error(`workspace is on a detached HEAD: ${workspace}`);
+            }
+            return branch;
+        }
+        catch (error) {
+            const err = error;
+            const stderr = typeof err.stderr === 'string' ? err.stderr.trim() : '';
+            if (stderr.includes('not a symbolic ref') || stderr.includes('HEAD')) {
+                throw new Error(`workspace is on a detached HEAD: ${workspace}`);
+            }
+            throw error;
+        }
+    });
+}
 export function gitRemote(workspace_1) {
     return __awaiter(this, arguments, void 0, function* (workspace, remote = 'origin') {
         yield validateWorkspace(workspace);
@@ -195,6 +242,49 @@ export function gitPushHeadToBranch(workspace, remote, branch) {
             cwd: workspace,
             maxBuffer: 10 * 1024 * 1024,
         });
+    });
+}
+export function gitWorktreeAdd(workspace_1, worktreePath_1, branch_1) {
+    return __awaiter(this, arguments, void 0, function* (workspace, worktreePath, branch, ref = 'HEAD') {
+        validateAbsoluteDir('worktreePath', worktreePath);
+        validateBranch(branch);
+        if (!/^[a-zA-Z0-9_.^~:/\-]+$/.test(ref)) {
+            throw new Error(`invalid ref: ${ref}`);
+        }
+        yield validateWorkspace(workspace);
+        yield mkdir(path.dirname(worktreePath), { recursive: true });
+        yield execFileAsync('git', ['worktree', 'add', '--force', '-b', branch, worktreePath, ref], {
+            cwd: workspace,
+            maxBuffer: 10 * 1024 * 1024,
+        });
+    });
+}
+export function gitWorktreePrune(workspace) {
+    return __awaiter(this, void 0, void 0, function* () {
+        yield validateWorkspace(workspace);
+        yield execFileAsync('git', ['worktree', 'prune', '--expire', 'now'], {
+            cwd: workspace,
+            maxBuffer: 10 * 1024 * 1024,
+        });
+    });
+}
+export function gitWorktreeRemove(workspace_1, worktreePath_1) {
+    return __awaiter(this, arguments, void 0, function* (workspace, worktreePath, options = {}) {
+        validateAbsoluteDir('worktreePath', worktreePath);
+        if (options.branch) {
+            validateBranch(options.branch);
+        }
+        yield validateWorkspace(workspace);
+        yield execFileAsync('git', ['worktree', 'remove', ...(options.force === false ? [] : ['--force']), worktreePath], { cwd: workspace, maxBuffer: 10 * 1024 * 1024 });
+        if (options.branch) {
+            yield execFileAsync('git', ['branch', '-D', options.branch], {
+                cwd: workspace,
+                maxBuffer: 10 * 1024 * 1024,
+            });
+        }
+        if (options.prune !== false) {
+            yield gitWorktreePrune(workspace);
+        }
     });
 }
 export function gitDiff(workspace_1, filePath_1) {
@@ -319,5 +409,161 @@ export function gitBlame(workspace, filePath) {
         yield validateWorkspace(workspace);
         const { stdout } = yield execFileAsync('git', ['blame', '--porcelain', '--', filePath], { cwd: workspace, maxBuffer: 10 * 1024 * 1024 });
         return parseBlame(stdout);
+    });
+}
+export function gitUnmergedPaths(workspace) {
+    return __awaiter(this, void 0, void 0, function* () {
+        yield validateWorkspace(workspace);
+        const { stdout } = yield execFileAsync('git', ['diff', '--name-only', '--diff-filter=U'], { cwd: workspace, maxBuffer: 10 * 1024 * 1024 });
+        return stdout
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean);
+    });
+}
+export function gitMergeAbort(workspace) {
+    return __awaiter(this, void 0, void 0, function* () {
+        yield validateWorkspace(workspace);
+        yield execFileAsync('git', ['merge', '--abort'], {
+            cwd: workspace,
+            maxBuffer: 10 * 1024 * 1024,
+        });
+    });
+}
+export function gitCherryPickAbort(workspace) {
+    return __awaiter(this, void 0, void 0, function* () {
+        yield validateWorkspace(workspace);
+        yield execFileAsync('git', ['cherry-pick', '--abort'], {
+            cwd: workspace,
+            maxBuffer: 10 * 1024 * 1024,
+        });
+    });
+}
+/**
+ * Merge `branch` into the current HEAD of `workspace`.
+ * On conflict: records unmerged paths, runs `merge --abort`, and returns `kind: 'conflict'`.
+ */
+export function gitMergeBranch(workspace_1, branch_1) {
+    return __awaiter(this, arguments, void 0, function* (workspace, branch, options = {}) {
+        var _a;
+        validateBranch(branch);
+        yield validateWorkspace(workspace);
+        const extra = options.noFf ? ['--no-ff'] : [];
+        try {
+            yield execFileAsync('git', ['merge', '--no-edit', ...extra, branch], { cwd: workspace, maxBuffer: 10 * 1024 * 1024 });
+            let mergeCommitSha;
+            try {
+                const { stdout } = yield execFileAsync('git', ['rev-parse', 'HEAD'], {
+                    cwd: workspace,
+                    maxBuffer: 1024 * 1024,
+                });
+                mergeCommitSha = stdout.trim();
+            }
+            catch (_b) {
+                mergeCommitSha = undefined;
+            }
+            return { ok: true, mergeCommitSha };
+        }
+        catch (error) {
+            const stderr = typeof error === 'object' && error !== null && 'stderr' in error
+                ? String((_a = error.stderr) !== null && _a !== void 0 ? _a : '')
+                : '';
+            let conflictPaths = [];
+            try {
+                conflictPaths = yield gitUnmergedPaths(workspace);
+            }
+            catch (_c) {
+                conflictPaths = [];
+            }
+            const looksLikeConflict = conflictPaths.length > 0 ||
+                /conflict/i.test(stderr) ||
+                /Automatic merge failed/i.test(stderr);
+            if (looksLikeConflict) {
+                try {
+                    yield gitMergeAbort(workspace);
+                }
+                catch (_d) {
+                    // best-effort: leave repo as-is if abort is not applicable
+                }
+                return {
+                    ok: false,
+                    kind: 'conflict',
+                    conflictPaths,
+                    stderr: stderr.trim() || undefined,
+                };
+            }
+            return {
+                ok: false,
+                kind: 'error',
+                message: stderr.trim() || (error instanceof Error ? error.message : String(error)),
+            };
+        }
+    });
+}
+/**
+ * Cherry-pick one or more commits onto the current HEAD of `workspace`.
+ * On conflict: records unmerged paths, runs `cherry-pick --abort`, and returns `kind: 'conflict'`.
+ */
+export function gitCherryPickCommits(workspace, commits) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a;
+        if (!Array.isArray(commits) || commits.length === 0) {
+            return { ok: false, kind: 'error', message: 'commits must be a non-empty array' };
+        }
+        for (const sha of commits) {
+            if (!/^[0-9a-f]{7,40}$/i.test(sha)) {
+                return { ok: false, kind: 'error', message: `invalid commit sha: ${sha}` };
+            }
+        }
+        yield validateWorkspace(workspace);
+        try {
+            yield execFileAsync('git', ['cherry-pick', ...commits], { cwd: workspace, maxBuffer: 10 * 1024 * 1024 });
+            let headSha;
+            try {
+                const { stdout } = yield execFileAsync('git', ['rev-parse', 'HEAD'], {
+                    cwd: workspace,
+                    maxBuffer: 1024 * 1024,
+                });
+                headSha = stdout.trim();
+            }
+            catch (_b) {
+                headSha = undefined;
+            }
+            return { ok: true, headSha };
+        }
+        catch (error) {
+            const stderr = typeof error === 'object' && error !== null && 'stderr' in error
+                ? String((_a = error.stderr) !== null && _a !== void 0 ? _a : '')
+                : '';
+            let conflictPaths = [];
+            try {
+                conflictPaths = yield gitUnmergedPaths(workspace);
+            }
+            catch (_c) {
+                conflictPaths = [];
+            }
+            const looksLikeConflict = conflictPaths.length > 0 ||
+                /conflict/i.test(stderr) ||
+                /Cherry-pick .*conflict/i.test(stderr);
+            if (looksLikeConflict) {
+                try {
+                    yield gitCherryPickAbort(workspace);
+                }
+                catch (_d) {
+                    // ignore
+                }
+                return {
+                    ok: false,
+                    kind: 'conflict',
+                    conflictPaths,
+                    stderr: stderr.trim() || undefined,
+                };
+            }
+            return {
+                ok: false,
+                kind: 'error',
+                message: stderr.trim() || (error instanceof Error ? error.message : String(error)),
+            };
+        }
     });
 }

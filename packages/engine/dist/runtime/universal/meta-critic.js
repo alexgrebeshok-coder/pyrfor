@@ -9,6 +9,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import { randomUUID } from 'node:crypto';
 import { promoteDoubleLoop, quarantineDoubleLoop } from './memory/historian-writer.js';
+import { assertMetaCriticRunBudget } from '../si-run-budget-guard.js';
 export const AUTONOMOUS_ELIGIBLE_TYPES = new Set(['algorithm', 'heuristic']);
 export const ALWAYS_HUMAN_TYPES = new Set(['policy', 'budget', 'verifier_rules']);
 export class MetaCriticValidationError extends Error {
@@ -26,6 +27,9 @@ export class MetaCritic {
             var _a;
             if (!input.runId.trim())
                 throw new MetaCriticValidationError('runId is required');
+            if (this.deps.runBudgetGuard) {
+                yield assertMetaCriticRunBudget(this.deps.runBudgetGuard, input.runId);
+            }
             const maxProposals = (_a = input.maxProposals) !== null && _a !== void 0 ? _a : 5;
             if (!Number.isInteger(maxProposals) || maxProposals < 1) {
                 throw new MetaCriticValidationError('maxProposals must be a positive integer');

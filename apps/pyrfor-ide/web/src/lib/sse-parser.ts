@@ -4,7 +4,7 @@ export interface SseFrame {
 }
 
 export function parseSseFrames(text: string): { frames: SseFrame[]; remainder: string } {
-  const parts = text.split('\n\n');
+  const parts = text.replace(/\r\n/g, '\n').split('\n\n');
   const remainder = parts.pop() ?? '';
   const frames: SseFrame[] = [];
   for (const block of parts) {
@@ -12,7 +12,8 @@ export function parseSseFrames(text: string): { frames: SseFrame[]; remainder: s
     const lines = block.split('\n');
     let event: string | undefined;
     const dataLines: string[] = [];
-    for (const line of lines) {
+    for (const rawLine of lines) {
+      const line = rawLine.replace(/\r$/, '');
       if (line.startsWith('event:')) {
         event = line.slice(6).trim();
       } else if (line.startsWith('data:')) {
