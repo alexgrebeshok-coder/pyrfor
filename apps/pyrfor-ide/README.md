@@ -46,7 +46,7 @@ It wraps the **`packages/engine` Node.js runtime** (Pyrfor daemon) inside a **Ta
 
 ## Install
 
-1. Download `Pyrfor-x.y.z-aarch64.dmg` from the [Releases](https://github.com/pyrfor-org/pyrfor/releases) page.
+1. Download `Pyrfor-x.y.z-aarch64.dmg` from the [Releases](https://github.com/alexgrebeshok-coder/pyrfor/releases) page.
 2. Open the DMG, drag **Pyrfor.app** to your **Applications** folder.
 3. Double-click to launch.
 
@@ -71,7 +71,7 @@ It wraps the **`packages/engine` Node.js runtime** (Pyrfor daemon) inside a **Ta
 
 ```bash
 # 1. Clone
-git clone https://github.com/pyrfor-org/pyrfor.git
+git clone https://github.com/alexgrebeshok-coder/pyrfor.git
 cd pyrfor
 
 # 2. Install root JS deps
@@ -215,7 +215,7 @@ The `latest.json` file (uploaded as a Release asset by CI) has this shape:
   "platforms": {
     "darwin-aarch64": {
       "signature": "<minisign signature string>",
-      "url": "https://github.com/pyrfor-org/pyrfor/releases/download/v1.0.0/Pyrfor.app.tar.gz"
+      "url": "https://github.com/alexgrebeshok-coder/pyrfor/releases/download/v1.0.0/Pyrfor.app.tar.gz"
     }
   }
 }
